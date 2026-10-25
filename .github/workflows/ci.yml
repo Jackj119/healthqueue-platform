@@ -1,0 +1,333 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    # Deploy PRs only touch manifests/, so they must not trigger a rebuild.
+    paths-ignore:
+      - "manifests/**"
+      - "infra/**"
+      - "argocd/**"
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "manifests/**"
+      - "infra/**"
+      - "argocd/**"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: healthqueue-platform
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest --cov=app --cov-report=term-missing --cov-fail-under=85
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
+
+      - name: Save Docker image
+        run: docker save ${{ env.IMAGE_NAME }}:${{ github.sha }} -o image.tar
+
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: image.tar
+          retention-days: 1
+
+  scan:
+    runs-on: ubuntu-latest
+    needs: docker
+    steps:
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Load Docker image
+        run: docker load -i image.tar
+
+      # Report-only: lists every HIGH/CRITICAL finding, including unfixed ones,
+      # so accepted-risk CVEs stay visible in the logs. Never fails the build.
+      - name: Scan image with Trivy (report all, non-blocking)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+
+      # Accepted risk: ignore-unfixed suppresses HIGH/CRITICAL findings that have
+      # no fixed version upstream (base image OS packages). The gate still fails
+      # on any HIGH/CRITICAL vulnerability with a fix available.
+      # Revisit when Debian publishes fixes or when the base image is updated.
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+  sbom:
+    runs-on: ubuntu-latest
+    needs: docker
+    steps:
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Load Docker image
+        run: docker load -i image.tar
+
+      - name: Generate SBOM with Syft
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: spdx-json
+          output-file: sbom-${{ github.sha }}.spdx.json
+          artifact-name: sbom-${{ github.sha }}.spdx.json
+          upload-artifact-retention: 30
+
+  push:
+    runs-on: ubuntu-latest
+    needs: [scan, sbom]
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      image: ${{ steps.image.outputs.ref }}
+      digest: ${{ steps.push.outputs.digest }}
+    env:
+      CERT_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/ci.yml@refs/heads/main
+      CERT_ISSUER: https://token.actions.githubusercontent.com
+    steps:
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Download SBOM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}.spdx.json
+
+      - name: Load Docker image
+        run: docker load -i image.tar
+
+      - name: Set lowercase image reference
+        id: image
+        run: |
+          echo "ref=${REGISTRY}/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag image for GHCR
+        run: docker tag ${{ env.IMAGE_NAME }}:${{ github.sha }} ${{ steps.image.outputs.ref }}:${{ github.sha }}
+
+      - name: Push image to GHCR
+        id: push
+        run: |
+          docker push ${{ steps.image.outputs.ref }}:${{ github.sha }}
+          digest=$(docker image inspect ${{ steps.image.outputs.ref }}:${{ github.sha }} --format '{{index .RepoDigests 0}}' | cut -d'@' -f2)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image with Cosign (keyless)
+        run: cosign sign --yes ${{ steps.image.outputs.ref }}@${{ steps.push.outputs.digest }}
+
+      - name: Verify Cosign signature
+        run: |
+          cosign verify \
+            --certificate-identity "$CERT_IDENTITY" \
+            --certificate-oidc-issuer "$CERT_ISSUER" \
+            ${{ steps.image.outputs.ref }}@${{ steps.push.outputs.digest }}
+
+      - name: Attest SBOM
+        run: |
+          cosign attest --yes \
+            --type spdxjson \
+            --predicate sbom-${{ github.sha }}.spdx.json \
+            ${{ steps.image.outputs.ref }}@${{ steps.push.outputs.digest }}
+
+      # SLSA v1 provenance describing this workflow run. It is generated and signed
+      # inside this job, so it records how the image was built but is not an
+      # isolated (SLSA Build L3) builder attestation.
+      - name: Generate SLSA provenance
+        env:
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+        run: |
+          jq -n \
+            --arg repo_url "$REPO_URL" \
+            --arg ref "$GITHUB_REF" \
+            --arg sha "$GITHUB_SHA" \
+            --arg event "$GITHUB_EVENT_NAME" \
+            --arg repo_id "$GITHUB_REPOSITORY_ID" \
+            --arg owner_id "$GITHUB_REPOSITORY_OWNER_ID" \
+            --arg builder "$CERT_IDENTITY" \
+            --arg run_url "$RUN_URL" \
+            --arg started "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{
+              buildDefinition: {
+                buildType: "https://actions.github.io/buildtypes/workflow/v1",
+                externalParameters: {
+                  workflow: { ref: $ref, repository: $repo_url, path: ".github/workflows/ci.yml" }
+                },
+                internalParameters: {
+                  github: { event_name: $event, repository_id: $repo_id, repository_owner_id: $owner_id }
+                },
+                resolvedDependencies: [
+                  { uri: ("git+" + $repo_url + "@" + $ref), digest: { gitCommit: $sha } }
+                ]
+              },
+              runDetails: {
+                builder: { id: $builder },
+                metadata: { invocationId: $run_url, startedOn: $started }
+              }
+            }' > provenance.json
+          cat provenance.json
+
+      - name: Attest SLSA provenance
+        run: |
+          cosign attest --yes \
+            --type slsaprovenance1 \
+            --predicate provenance.json \
+            ${{ steps.image.outputs.ref }}@${{ steps.push.outputs.digest }}
+
+      - name: Verify SBOM attestation
+        run: |
+          cosign verify-attestation \
+            --type spdxjson \
+            --certificate-identity "$CERT_IDENTITY" \
+            --certificate-oidc-issuer "$CERT_ISSUER" \
+            ${{ steps.image.outputs.ref }}@${{ steps.push.outputs.digest }} > /dev/null
+
+      - name: Verify SLSA provenance attestation
+        run: |
+          cosign verify-attestation \
+            --type slsaprovenance1 \
+            --certificate-identity "$CERT_IDENTITY" \
+            --certificate-oidc-issuer "$CERT_ISSUER" \
+            ${{ steps.image.outputs.ref }}@${{ steps.push.outputs.digest }} > /dev/null
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: push
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write # needed to create the "deploy" label if it is missing
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      IMAGE: ${{ needs.push.outputs.image }}@${{ needs.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write image digest into deployment manifest
+        run: |
+          sed -i -E "s|^(\s*image:\s*).*/${IMAGE_NAME}[:@].*$|\1${IMAGE}|" manifests/deployment.yaml
+          grep -qF "image: ${IMAGE}" manifests/deployment.yaml || {
+            echo "::error::Failed to update image in manifests/deployment.yaml"
+            exit 1
+          }
+          git diff
+
+      - name: Open deploy pull request
+        run: |
+          if git diff --quiet; then
+            echo "Manifest already references ${IMAGE}; nothing to deploy."
+            exit 0
+          fi
+
+          branch="deploy/${GITHUB_SHA::12}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "deploy: ${IMAGE_NAME} ${GITHUB_SHA::12}"
+          git push origin "$branch"
+
+          gh label create deploy --color 0E8A16 --description "Image digest rollout" 2>/dev/null || true
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --label deploy \
+            --title "deploy: ${IMAGE_NAME} ${GITHUB_SHA::12}" \
+            --body "Updates \`manifests/deployment.yaml\` to the signed, attested image built from ${GITHUB_SHA}.
+
+          \`\`\`
+          ${IMAGE}
+          \`\`\`
+
+          Pipeline run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+  summary:
+    runs-on: ubuntu-latest
+    needs: [test, docker, scan, sbom, push, deploy]
+    if: always()
+    steps:
+      - name: Generate pipeline summary
+        run: |
+          declare -A results=(
+            ["Test"]="${{ needs.test.result }}"
+            ["Docker Build"]="${{ needs.docker.result }}"
+            ["Trivy Scan"]="${{ needs.scan.result }}"
+            ["SBOM (Syft)"]="${{ needs.sbom.result }}"
+            ["Sign, Attest & Push"]="${{ needs.push.result }}"
+            ["Deploy PR"]="${{ needs.deploy.result }}"
+          )
+
+          {
+            echo "## Pipeline Summary"
+            echo ""
+            echo "| Stage | Result |"
+            echo "|-------|--------|"
+            for stage in "Test" "Docker Build" "Trivy Scan" "SBOM (Syft)" "Sign, Attest & Push" "Deploy PR"; do
+              result="${results[$stage]}"
+              case "$result" in
+                success) status="✅ Passed" ;;
+                failure) status="❌ Failed" ;;
+                skipped) status="⏭️ Skipped" ;;
+                cancelled) status="🚫 Cancelled" ;;
+                *) status="❓ Unknown ($result)" ;;
+              esac
+              echo "| $stage | $status |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

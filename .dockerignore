@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.git/
+.github/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+tests/
+manifests/
+requirements-dev.txt
