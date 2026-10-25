@@ -1,0 +1,128 @@
+name: Infrastructure
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra.yml"
+
+permissions:
+  contents: read
+
+# Never run two plans/applies against the same state at once.
+concurrency:
+  group: infra-${{ github.ref }}
+  cancel-in-progress: false
+
+# Both jobs run against an ephemeral LocalStack container; nothing reaches
+# real AWS. The AWS_* values are LocalStack's dummy credentials.
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  TF_VAR_localstack_endpoint: http://localhost:4566
+  TF_VAR_region: ${{ vars.AWS_REGION || 'us-east-1' }}
+  TF_VAR_environment: ${{ vars.ENVIRONMENT_NAME || 'dev' }}
+  # Key material for infra/'s pbkdf2 state and plan encryption.
+  TF_VAR_state_passphrase: ${{ secrets.TOFU_STATE_PASSPHRASE }}
+
+defaults:
+  run:
+    working-directory: infra
+
+jobs:
+  plan:
+    name: Plan (LocalStack)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    services:
+      localstack:
+        image: localstack/localstack-pro:latest
+        ports:
+          - 4566:4566
+        env:
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: opentofu/setup-opentofu@v1
+
+      - name: Wait for LocalStack
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4566/_localstack/health >/dev/null; then
+              echo "LocalStack is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "LocalStack did not become ready in time" >&2
+          exit 1
+
+      - name: tofu fmt
+        run: tofu fmt -check -recursive
+
+      # The S3 backend needs its bucket before infra/ can even init.
+      - name: Bootstrap state bucket
+        working-directory: infra/bootstrap
+        run: |
+          tofu init
+          tofu validate -no-color
+          tofu apply -auto-approve -no-color
+
+      - name: tofu init
+        run: tofu init
+
+      - name: tofu validate
+        run: tofu validate -no-color
+
+      - name: tofu plan
+        run: tofu plan -no-color
+
+  apply:
+    name: Apply (LocalStack)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    services:
+      localstack:
+        image: localstack/localstack-pro:latest
+        ports:
+          - 4566:4566
+        env:
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: opentofu/setup-opentofu@v1
+
+      - name: Wait for LocalStack
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4566/_localstack/health >/dev/null; then
+              echo "LocalStack is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "LocalStack did not become ready in time" >&2
+          exit 1
+
+      - name: Bootstrap state bucket
+        working-directory: infra/bootstrap
+        run: |
+          tofu init
+          tofu apply -auto-approve -no-color
+
+      - name: tofu init
+        run: tofu init
+
+      - name: tofu apply
+        run: tofu apply -auto-approve -no-color
