@@ -30,7 +30,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: healthqueue-api
-          image: ghcr.io/jackj119/healthqueue-platform:latest
+          image: ghcr.io/jackj119/healthqueue-platform@sha256:531b3bf74ce1d9cdfe4ce90aff9be0cd8ded5de76642d417cc57c350940e7a76
           imagePullPolicy: Always
           ports:
             - name: http
