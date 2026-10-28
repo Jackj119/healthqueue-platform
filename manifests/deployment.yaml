@@ -39,7 +39,7 @@ spec:
           # Pinned by digest, not tag: the digest is the exact image CI scanned,
           # signed and attested, and it cannot be re-pointed. The deploy job in
           # ci.yml rewrites the next line, so keep it free of comments.
-          image: ghcr.io/jackj119/healthqueue-platform@sha256:531b3bf74ce1d9cdfe4ce90aff9be0cd8ded5de76642d417cc57c350940e7a76
+          image: ghcr.io/jackj119/healthqueue-platform@sha256:67d726af141c3c34f048a03b23d307087438eb610076fbb4b22dc1a3622fa122
           imagePullPolicy: Always
           ports:
             - name: http
