@@ -8,12 +8,14 @@ on:
       - "manifests/**"
       - "infra/**"
       - "argocd/**"
+      - "observability/**"
   pull_request:
     branches: [main]
     paths-ignore:
       - "manifests/**"
       - "infra/**"
       - "argocd/**"
+      - "observability/**"
 
 env:
   REGISTRY: ghcr.io
@@ -27,10 +29,10 @@ jobs:
         python-version: ["3.12"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -45,7 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Build Docker image
         run: docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
@@ -54,7 +56,7 @@ jobs:
         run: docker save ${{ env.IMAGE_NAME }}:${{ github.sha }} -o image.tar
 
       - name: Upload Docker image artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: docker-image
           path: image.tar
@@ -65,7 +67,7 @@ jobs:
     needs: docker
     steps:
       - name: Download Docker image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: docker-image
 
@@ -100,7 +102,7 @@ jobs:
     needs: docker
     steps:
       - name: Download Docker image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: docker-image
 
@@ -108,7 +110,7 @@ jobs:
         run: docker load -i image.tar
 
       - name: Generate SBOM with Syft
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           image: ${{ env.IMAGE_NAME }}:${{ github.sha }}
           format: spdx-json
@@ -132,12 +134,12 @@ jobs:
       CERT_ISSUER: https://token.actions.githubusercontent.com
     steps:
       - name: Download Docker image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: docker-image
 
       - name: Download SBOM artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: sbom-${{ github.sha }}.spdx.json
 
@@ -150,7 +152,7 @@ jobs:
           echo "ref=${REGISTRY}/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -167,7 +169,7 @@ jobs:
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
 
       - name: Sign image with Cosign (keyless)
         run: cosign sign --yes ${{ steps.image.outputs.ref }}@${{ steps.push.outputs.digest }}
@@ -259,7 +261,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       IMAGE: ${{ needs.push.outputs.image }}@${{ needs.push.outputs.digest }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Write image digest into deployment manifest
         run: |

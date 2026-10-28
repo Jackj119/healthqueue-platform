@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability
+  namespace: argocd
+  finalizers:
+    # Delete the stack's Kubernetes resources when this Application is deleted
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Jackj119/healthqueue-platform.git
+    targetRevision: main
+    # Argo CD detects kustomization.yaml and builds the directory with kustomize.
+    path: observability
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  # Same policy as the app: Git is the only source of truth. Note that prune
+  # also covers the PVC, so removing pvc.yaml from Git deletes the stored metrics.
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    # Creates the namespace before syncing the namespaced resources that need it.
+    syncOptions:
+      - CreateNamespace=true

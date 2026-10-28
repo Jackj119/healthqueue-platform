@@ -44,15 +44,15 @@ jobs:
     runs-on: ubuntu-latest
     services:
       localstack:
-        image: localstack/localstack-pro:latest
+        image: localstack/localstack-pro:2026.9.0
         ports:
           - 4566:4566
         env:
           LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_TOKEN }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: opentofu/setup-opentofu@v1
+      - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1.0.8
 
       - name: Wait for LocalStack
         run: |
@@ -93,15 +93,15 @@ jobs:
     environment: production
     services:
       localstack:
-        image: localstack/localstack-pro:latest
+        image: localstack/localstack-pro:2026.9.0
         ports:
           - 4566:4566
         env:
           LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_TOKEN }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: opentofu/setup-opentofu@v1
+      - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1.0.8
 
       - name: Wait for LocalStack
         run: |

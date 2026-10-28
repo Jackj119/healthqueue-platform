@@ -6,6 +6,8 @@ metadata:
   labels:
     app.kubernetes.io/name: healthqueue-api
 spec:
+  # Reachable only inside the cluster. External access is left to an ingress
+  # or `kubectl port-forward`, so nothing is exposed by default.
   type: ClusterIP
   selector:
     app.kubernetes.io/name: healthqueue-api

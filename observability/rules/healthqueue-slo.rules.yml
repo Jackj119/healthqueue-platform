@@ -1,0 +1,28 @@
+# SLIs for the HealthQueue API, measured over the 30-day SLO window:
+#   availability: share of /appointments responses that are not 5xx (SLO 99.9%)
+#   latency:      share of requests that complete in under 250 ms (SLO 99%)
+groups:
+  - name: healthqueue-slo
+    rules:
+      - record: healthqueue:slo_availability:ratio_rate30d
+        expr: |
+          sum(rate(healthqueue_http_requests_total{endpoint=~"/appointments.*",status!~"5.."}[30d]))
+          /
+          sum(rate(healthqueue_http_requests_total{endpoint=~"/appointments.*"}[30d]))
+
+      - record: healthqueue:slo_latency:ratio_rate30d
+        expr: |
+          sum(rate(healthqueue_http_request_duration_seconds_bucket{le="0.25"}[30d]))
+          /
+          sum(rate(healthqueue_http_request_duration_seconds_count[30d]))
+
+      # Below 99.9% the 30-day error budget is spent: freeze releases until
+      # availability recovers.
+      - alert: HealthQueueErrorBudgetExhausted
+        expr: healthqueue:slo_availability:ratio_rate30d < 0.999
+        labels:
+          severity: ticket
+          slo: availability
+        annotations:
+          summary: HealthQueue has spent its 30-day error budget; freeze releases
+          description: "30-day availability of /appointments is {{ $value | humanizePercentage }}, below the 99.9% SLO."

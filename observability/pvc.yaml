@@ -1,0 +1,16 @@
+# 30 days of retention only means something if the data survives a pod
+# restart, so the TSDB lives on a volume rather than in an emptyDir. At this
+# scale (a few hundred series at 15s) 30 days is tens of MB; 2Gi leaves room
+# for compaction and growth.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: prometheus
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi

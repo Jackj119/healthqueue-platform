@@ -1,6 +1,10 @@
 # Creates the S3 bucket that holds infra/'s remote state. This config cannot
 # store its own state in that bucket (it has to exist first), so it uses local
 # state. Apply it once per LocalStack instance, before running infra/.
+#
+# Keeping it as a separate stack, rather than a resource inside infra/, also
+# means `tofu destroy` in infra/ can never delete the bucket holding its own
+# state.
 terraform {
   required_version = ">= 1.8.0"
 
@@ -47,6 +51,8 @@ resource "aws_s3_bucket_versioning" "state" {
   }
 }
 
+# Defense in depth: infra/ already encrypts state client-side, and this also
+# keeps the stored objects encrypted at rest.
 resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
   bucket = aws_s3_bucket.state.id
 
@@ -57,6 +63,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
   }
 }
 
+# State must never be publicly readable, whatever ACLs or policies are added later.
 resource "aws_s3_bucket_public_access_block" "state" {
   bucket = aws_s3_bucket.state.id
 

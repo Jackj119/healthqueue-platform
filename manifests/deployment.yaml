@@ -16,12 +16,18 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: healthqueue-api
+      # Lets an annotation-based Prometheus scrape config find the pod without
+      # a ServiceMonitor or other CRD.
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "5000"
         prometheus.io/path: /metrics
     spec:
+      # The app never calls the Kubernetes API, so it has no use for a token,
+      # and a compromised container would have no token to steal.
       automountServiceAccountToken: false
+      # Satisfies the namespace's "restricted" Pod Security level; the UID is
+      # the one created in the Dockerfile.
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -30,6 +36,9 @@ spec:
           type: RuntimeDefault
       containers:
         - name: healthqueue-api
+          # Pinned by digest, not tag: the digest is the exact image CI scanned,
+          # signed and attested, and it cannot be re-pointed. The deploy job in
+          # ci.yml rewrites the next line, so keep it free of comments.
           image: ghcr.io/jackj119/healthqueue-platform@sha256:531b3bf74ce1d9cdfe4ce90aff9be0cd8ded5de76642d417cc57c350940e7a76
           imagePullPolicy: Always
           ports:
@@ -49,6 +58,8 @@ spec:
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
+          # No CPU limit, to avoid throttling during short bursts. Memory is
+          # limited because the scheduler cannot reclaim it from a leaking pod.
           resources:
             requests:
               cpu: 50m
@@ -57,6 +68,8 @@ spec:
               memory: 128Mi
           securityContext:
             allowPrivilegeEscalation: false
+            # The app writes nothing to disk, so a read-only root stops an
+            # attacker from changing the code or dropping tools into the container.
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
