@@ -10,14 +10,20 @@ spec:
   project: default
   source:
     repoURL: https://github.com/Jackj119/healthqueue-platform.git
+    # Tracks main: merging a deploy PR is the release step, so what is on main
+    # is what runs.
     targetRevision: main
     path: manifests
   destination:
     server: https://kubernetes.default.svc
     namespace: healthqueue
   syncPolicy:
+    # Git is the only source of truth. prune deletes resources removed from
+    # manifests/, and selfHeal reverts manual kubectl changes, so the cluster
+    # cannot drift from what was reviewed.
     automated:
       prune: true
       selfHeal: true
+    # Creates the namespace before syncing the namespaced resources that need it.
     syncOptions:
       - CreateNamespace=true

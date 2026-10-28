@@ -4,4 +4,6 @@ metadata:
   name: healthqueue
   labels:
     app.kubernetes.io/name: healthqueue-api
+    # The API server rejects any pod here that is not fully hardened, so a
+    # weakened securityContext fails at admission instead of running.
     pod-security.kubernetes.io/enforce: restricted

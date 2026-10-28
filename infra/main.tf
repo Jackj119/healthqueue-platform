@@ -19,11 +19,15 @@ terraform {
     skip_requesting_account_id  = true
 
     # Native S3 locking (a .tflock object next to the state); no DynamoDB table.
+    # Locking stops two concurrent applies from overwriting each other's state.
     use_lockfile = true
   }
 
   # State and plan files are encrypted client-side before they reach the backend.
-  # enforced = true makes OpenTofu refuse to write either one unencrypted.
+  # State holds resource attributes, including secrets, in plain text. Bucket
+  # SSE only protects the disks; anyone who can read the bucket could still
+  # read the state. With client-side encryption, the backend only stores
+  # ciphertext. enforced = true makes OpenTofu refuse to write either one unencrypted.
   encryption {
     key_provider "pbkdf2" "state" {
       passphrase = var.state_passphrase
@@ -180,6 +184,8 @@ resource "aws_s3_bucket" "main" {
   }
 }
 
+# Blocks public access at the bucket level, so a stray ACL or policy cannot
+# make objects public.
 resource "aws_s3_bucket_public_access_block" "main" {
   bucket = aws_s3_bucket.main.id
 

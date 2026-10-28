@@ -5,5 +5,7 @@ metadata:
   namespace: healthqueue
   labels:
     app.kubernetes.io/name: healthqueue-api
+# Runtime settings live here rather than in the image, so the same signed
+# digest can be promoted unchanged between environments.
 data:
   APP_ENV: production
