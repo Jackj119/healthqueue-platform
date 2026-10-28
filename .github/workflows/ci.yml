@@ -9,6 +9,7 @@ on:
       - "infra/**"
       - "argocd/**"
       - "observability/**"
+      - "**.md"
   pull_request:
     branches: [main]
     paths-ignore:
@@ -16,6 +17,7 @@ on:
       - "infra/**"
       - "argocd/**"
       - "observability/**"
+      - "**.md"
 
 env:
   REGISTRY: ghcr.io
